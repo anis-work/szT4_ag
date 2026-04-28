@@ -12,6 +12,7 @@ import pandas as pd
 
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.google.google_ai import GoogleAIChatCompletion
+from semantic_kernel.connectors.ai.google.google_ai.google_ai_prompt_execution_settings import GoogleAIPromptExecutionSettings
 from semantic_kernel.functions import KernelFunctionFromPrompt
 
 from config import GOOGLE_API_KEY, GEMINI_MODEL
@@ -168,6 +169,7 @@ def get_kernel() -> Kernel:
         function_name="rank_candidates",
         plugin_name="ranking",
         prompt=RANKING_PROMPT,
+        prompt_execution_settings=GoogleAIPromptExecutionSettings(temperature=0.0),
     ))
     return kernel
 
@@ -225,8 +227,7 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription) -> list:
     for cv in cvs:
         vs.add(cv)
 
-    kernel.plugins["retrieval"] = CVRetrievalPlugin(vs) if "retrieval" in kernel.plugins \
-        else kernel.add_plugin(CVRetrievalPlugin(vs), plugin_name="retrieval") or kernel.plugins["retrieval"]
+    kernel.add_plugin(CVRetrievalPlugin(vs), plugin_name="retrieval")
 
     retrieve_fn = kernel.get_function(plugin_name="retrieval", function_name="retrieve")
     retrieved = await _invoke_with_retry(kernel, retrieve_fn, query=jd.requirements, top_k=len(cvs))

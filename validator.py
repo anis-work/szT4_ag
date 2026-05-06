@@ -60,5 +60,5 @@ def validate_results(results: List[RankedResult]) -> List[RankedResult]:
     
     # Sort by rank
     valid_results.sort(key=lambda r: r.rank)
-    
+
     return valid_results

@@ -1,0 +1,211 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "divisions": ["Pumps Equipment", "Rotating Equipment & Defense", "Chemtech", "Services", "Digital & IT"],
+    "description": "Sulzer-specific role taxonomy mapping job families to required and implied skills per division"
+  },
+
+  "divisions": {
+
+    "pumps_equipment": {
+      "label": "Pumps Equipment",
+      "role_families": {
+
+        "pump_engineer": {
+          "titles": ["pump engineer", "hydraulic engineer", "pump design engineer", "centrifugal pump engineer", "pump application engineer"],
+          "required_skills": ["centrifugal pump design", "hydraulic calculations", "NPSH", "pump curves", "API 610", "impeller design", "mechanical seals", "pump selection", "CAD"],
+          "implied_skills": ["AutoCAD", "SolidWorks", "ANSYS", "CFD", "fluid mechanics", "thermodynamics", "material selection", "GD&T", "ISO standards"],
+          "soft_skills": ["technical documentation", "customer communication", "cross-functional collaboration"],
+          "certifications": ["API 610", "ISO 9001 awareness"],
+          "experience_bands": {"junior": 2, "mid": 5, "senior": 8}
+        },
+
+        "rotating_equipment_engineer": {
+          "titles": ["rotating equipment engineer", "machinery engineer", "turbomachinery engineer", "compressor engineer"],
+          "required_skills": ["rotating machinery", "vibration analysis", "API standards", "alignment", "balancing", "condition monitoring", "RCA", "MTBF"],
+          "implied_skills": ["API 610", "API 670", "API 682", "ASME", "FEA", "rotor dynamics", "bearing design", "lubrication systems", "CMMS"],
+          "soft_skills": ["failure analysis reporting", "vendor management", "site coordination"],
+          "certifications": ["API 610", "API 670", "Vibration Analysis ISO 18436"],
+          "experience_bands": {"junior": 2, "mid": 5, "senior": 10}
+        },
+
+        "application_engineer": {
+          "titles": ["application engineer", "sales application engineer", "technical sales engineer", "pre-sales engineer"],
+          "required_skills": ["pump selection", "technical proposals", "customer requirements analysis", "sizing calculations", "bid preparation", "SAP"],
+          "implied_skills": ["hydraulic calculations", "API 610", "pump curves", "NPSH", "MS Excel", "CRM tools", "cost estimation", "contract review"],
+          "soft_skills": ["customer facing", "negotiation", "presentation skills", "commercial awareness"],
+          "certifications": [],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        },
+
+        "manufacturing_engineer": {
+          "titles": ["manufacturing engineer", "production engineer", "process engineer", "machining engineer", "CNC engineer"],
+          "required_skills": ["CNC machining", "manufacturing processes", "GD&T", "quality control", "process planning", "lean manufacturing"],
+          "implied_skills": ["SolidWorks", "AutoCAD", "FMEA", "SPC", "ISO 9001", "5S", "Kaizen", "SAP PP", "tooling design"],
+          "soft_skills": ["shop floor communication", "problem solving", "continuous improvement mindset"],
+          "certifications": ["ISO 9001", "Six Sigma Green Belt"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 8}
+        },
+
+        "quality_engineer": {
+          "titles": ["quality engineer", "QA engineer", "QC inspector", "quality assurance engineer", "NDT engineer"],
+          "required_skills": ["quality management systems", "ISO 9001", "inspection", "NDT", "FMEA", "root cause analysis", "audit", "dimensional inspection"],
+          "implied_skills": ["UT", "MT", "PT", "RT", "ASME", "API standards", "CMM", "calibration", "supplier quality", "PPAP", "8D"],
+          "soft_skills": ["attention to detail", "documentation", "cross-functional communication"],
+          "certifications": ["ISO 9001 Lead Auditor", "ASNT NDT Level II", "Six Sigma"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        }
+      }
+    },
+
+    "rotating_equipment_defense": {
+      "label": "Rotating Equipment & Defense",
+      "role_families": {
+
+        "turbomachinery_engineer": {
+          "titles": ["turbomachinery engineer", "turbocompressor engineer", "expander engineer", "gas turbine engineer", "steam turbine engineer"],
+          "required_skills": ["turbomachinery design", "rotor dynamics", "aerodynamic design", "compressor maps", "thermodynamic cycle analysis", "API 617", "API 672"],
+          "implied_skills": ["CFD", "FEA", "ANSYS", "blade design", "surge control", "anti-surge valves", "dry gas seals", "ASME PTC", "vibration analysis"],
+          "soft_skills": ["technical report writing", "cross-discipline coordination", "client interface"],
+          "certifications": ["API 617", "API 670", "PE license"],
+          "experience_bands": {"junior": 3, "mid": 6, "senior": 10}
+        },
+
+        "controls_automation_engineer": {
+          "titles": ["controls engineer", "automation engineer", "instrumentation engineer", "I&C engineer", "PLC engineer", "DCS engineer"],
+          "required_skills": ["PLC programming", "DCS", "SCADA", "instrumentation", "control loops", "PID tuning", "HMI", "P&ID", "functional safety"],
+          "implied_skills": ["Siemens S7", "Allen Bradley", "Rockwell", "ABB", "Honeywell", "HART", "Profibus", "Modbus", "IEC 61511", "SIL", "FAT", "SAT"],
+          "soft_skills": ["commissioning support", "documentation", "cross-discipline teamwork"],
+          "certifications": ["TUV Functional Safety Engineer", "IEC 61511", "ISA CCST"],
+          "experience_bands": {"junior": 2, "mid": 5, "senior": 8}
+        },
+
+        "defense_engineer": {
+          "titles": ["defense engineer", "naval engineer", "marine engineer", "defense systems engineer", "propulsion engineer"],
+          "required_skills": ["defense systems", "naval architecture", "propulsion systems", "MIL standards", "systems engineering", "reliability engineering"],
+          "implied_skills": ["MIL-STD-810", "MIL-STD-461", "FMECA", "shock and vibration", "thermal management", "hydraulic systems", "MBSE"],
+          "soft_skills": ["security clearance awareness", "technical documentation", "stakeholder management"],
+          "certifications": ["INCOSE CSEP"],
+          "experience_bands": {"junior": 3, "mid": 6, "senior": 10}
+        }
+      }
+    },
+
+    "chemtech": {
+      "label": "Chemtech",
+      "role_families": {
+
+        "process_engineer": {
+          "titles": ["process engineer", "chemical engineer", "separation engineer", "distillation engineer", "mass transfer engineer"],
+          "required_skills": ["process simulation", "distillation", "mass transfer", "heat transfer", "P&ID", "HAZOP", "process design", "Aspen Plus", "HYSYS"],
+          "implied_skills": ["column internals", "trays", "structured packing", "random packing", "absorption", "extraction", "PRV sizing", "hydraulic calculations", "PFD"],
+          "soft_skills": ["technical proposal writing", "client communication", "project coordination"],
+          "certifications": ["IChemE membership", "PE license", "HAZOP facilitator"],
+          "experience_bands": {"junior": 2, "mid": 5, "senior": 9}
+        },
+
+        "project_engineer": {
+          "titles": ["project engineer", "engineering project manager", "EPC project engineer", "proposal engineer"],
+          "required_skills": ["project management", "EPC", "engineering coordination", "schedule management", "cost control", "risk management", "SAP PS", "MS Project"],
+          "implied_skills": ["FEED", "detailed engineering", "vendor management", "FAT coordination", "commissioning", "handover documentation", "change management", "PMBOK"],
+          "soft_skills": ["leadership", "stakeholder communication", "problem solving under pressure"],
+          "certifications": ["PMP", "PRINCE2"],
+          "experience_bands": {"junior": 3, "mid": 6, "senior": 10}
+        },
+
+        "field_service_engineer_chemtech": {
+          "titles": ["field service engineer", "commissioning engineer", "site engineer", "installation engineer"],
+          "required_skills": ["commissioning", "installation", "site supervision", "troubleshooting", "mechanical completion", "punch list", "HSE compliance"],
+          "implied_skills": ["column internals installation", "packing installation", "tray installation", "pressure testing", "leak testing", "as-built documentation", "client training"],
+          "soft_skills": ["adaptability", "client facing", "independent working", "travel readiness"],
+          "certifications": ["BOSIET", "H2S", "NEBOSH", "First Aid"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        }
+      }
+    },
+
+    "services": {
+      "label": "Services",
+      "role_families": {
+
+        "field_service_engineer": {
+          "titles": ["field service engineer", "service engineer", "maintenance engineer", "overhaul engineer", "repair engineer"],
+          "required_skills": ["equipment overhaul", "maintenance", "troubleshooting", "alignment", "balancing", "mechanical seals", "bearings", "site work", "HSE"],
+          "implied_skills": ["pump overhaul", "compressor overhaul", "turbine overhaul", "laser alignment", "dynamic balancing", "vibration measurement", "oil flushing", "CMMS", "SAP PM"],
+          "soft_skills": ["customer service", "travel readiness", "independent problem solving", "report writing"],
+          "certifications": ["BOSIET", "NEBOSH", "H2S", "First Aid", "Confined Space Entry"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        },
+
+        "workshop_technician": {
+          "titles": ["workshop technician", "machinist", "fitter", "mechanical technician", "overhaul technician", "repair technician"],
+          "required_skills": ["mechanical fitting", "machining", "precision measurement", "assembly", "disassembly", "quality inspection", "hand tools", "power tools"],
+          "implied_skills": ["lathe operation", "milling", "grinding", "bore gauges", "micrometers", "dial indicators", "torque wrenches", "hydraulic tools", "bearing fitting", "seal fitting"],
+          "soft_skills": ["attention to detail", "safety awareness", "teamwork"],
+          "certifications": ["NVQ Level 3", "apprenticeship"],
+          "experience_bands": {"junior": 1, "mid": 3, "senior": 6}
+        },
+
+        "reliability_engineer": {
+          "titles": ["reliability engineer", "asset integrity engineer", "RCM engineer", "predictive maintenance engineer"],
+          "required_skills": ["RCM", "FMEA", "FMECA", "RCA", "condition monitoring", "vibration analysis", "MTBF", "MTTR", "asset management"],
+          "implied_skills": ["ISO 55000", "PdM", "oil analysis", "thermography", "ultrasound testing", "CMMS", "SAP PM", "KPI development", "life cycle costing", "RAM analysis"],
+          "soft_skills": ["analytical thinking", "cross-functional influence", "report writing"],
+          "certifications": ["Vibration Analysis ISO 18436", "CMRP", "ISO 55001 awareness"],
+          "experience_bands": {"junior": 3, "mid": 6, "senior": 10}
+        },
+
+        "sales_service_engineer": {
+          "titles": ["sales engineer", "service sales engineer", "account manager", "business development engineer", "aftermarket sales engineer"],
+          "required_skills": ["technical sales", "aftermarket", "service contracts", "customer relationship management", "quotation", "SAP CRM", "market development"],
+          "implied_skills": ["pump knowledge", "rotating equipment knowledge", "cost estimation", "contract negotiation", "Salesforce", "pipeline management", "KPI tracking"],
+          "soft_skills": ["commercial acumen", "relationship building", "presentation", "negotiation", "self-motivation"],
+          "certifications": [],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        }
+      }
+    },
+
+    "digital_it": {
+      "label": "Digital & IT",
+      "role_families": {
+
+        "data_engineer": {
+          "titles": ["data engineer", "senior data engineer", "data platform engineer", "ETL developer", "data pipeline engineer"],
+          "required_skills": ["Python", "SQL", "ETL", "data pipelines", "cloud platforms", "data warehousing", "Apache Spark", "Airflow"],
+          "implied_skills": ["Azure", "AWS", "GCP", "Databricks", "dbt", "Kafka", "REST APIs", "Docker", "Kubernetes", "CI/CD", "Git", "data modelling", "Delta Lake"],
+          "soft_skills": ["analytical thinking", "documentation", "cross-functional collaboration"],
+          "certifications": ["Azure Data Engineer Associate", "AWS Data Analytics", "GCP Professional Data Engineer"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        },
+
+        "software_engineer": {
+          "titles": ["software engineer", "backend engineer", "full stack engineer", "application developer", "software developer"],
+          "required_skills": ["Python", "REST APIs", "microservices", "SQL", "Git", "agile", "unit testing", "CI/CD"],
+          "implied_skills": ["FastAPI", "Django", "Flask", "Docker", "Kubernetes", "Azure", "AWS", "PostgreSQL", "Redis", "OAuth", "OpenAPI"],
+          "soft_skills": ["code review", "technical documentation", "agile ceremonies"],
+          "certifications": ["Azure Developer Associate", "AWS Developer"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        },
+
+        "it_infrastructure": {
+          "titles": ["IT engineer", "infrastructure engineer", "systems administrator", "network engineer", "cloud engineer"],
+          "required_skills": ["Windows Server", "Active Directory", "networking", "TCP/IP", "firewalls", "VPN", "backup systems", "IT security"],
+          "implied_skills": ["Azure AD", "Office 365", "VMware", "Hyper-V", "SCCM", "ITIL", "ServiceNow", "DNS", "DHCP", "endpoint management"],
+          "soft_skills": ["incident management", "user support", "documentation"],
+          "certifications": ["ITIL Foundation", "Microsoft Azure Administrator", "CompTIA Network+"],
+          "experience_bands": {"junior": 2, "mid": 4, "senior": 7}
+        },
+
+        "hr_systems": {
+          "titles": ["HR analyst", "HR data analyst", "HRIS analyst", "people analytics", "talent acquisition specialist", "recruiter"],
+          "required_skills": ["HRIS", "data analysis", "recruitment", "ATS", "Excel", "reporting", "HR processes", "onboarding"],
+          "implied_skills": ["SAP SuccessFactors", "Workday", "Power BI", "Tableau", "Python", "SQL", "LinkedIn Recruiter", "Boolean search", "employer branding", "competency frameworks"],
+          "soft_skills": ["confidentiality", "stakeholder management", "communication", "attention to detail"],
+          "certifications": ["SHRM-CP", "CIPD", "SAP SuccessFactors certification"],
+          "experience_bands": {"junior": 1, "mid": 3, "senior": 6}
+        }
+      }
+    }
+  }
+}

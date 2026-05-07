@@ -27,7 +27,7 @@ from validator import validate_results
 
 logger = logging.getLogger(__name__)
 
-RANKING_PROMPT = """You are a fair and balanced technical recruiter. Evaluate each candidate holistically against the job description.
+RANKING_PROMPT = """You are a strict and precise technical recruiter. Your job is to score and rank candidates against a job description with accuracy and consistency.
 
 JOB DESCRIPTION:
 {{$job_description}}
@@ -35,47 +35,44 @@ JOB DESCRIPTION:
 CANDIDATE PROFILES:
 {{$retrieved_cvs}}
 
-EVALUATION APPROACH:
+SCORING RULES — follow these exactly, no exceptions:
 
-1. SKILLS ASSESSMENT
-   - Identify required skills from the JD
-   - Check each candidate for explicit evidence of each skill
-   - Count matched skills as skills_matched, list missing ones in skills_missing
+STEP 1 — IDENTIFY REQUIRED SKILLS
+List every required skill, tool, and experience from the JD. Count the total. This is your baseline.
 
-2. HOLISTIC SCORING (do not use a rigid formula)
-   - 90-100: Exceptional fit — meets all requirements, has bonus skills
-   - 75-89: Strong fit — meets most required skills and experience
-   - 60-74: Good fit — meets majority of skills, minor gaps
-   - 40-59: Partial fit — meets some skills, notable gaps
-   - 0-39: Weak fit — missing critical skills or significantly under-experienced
-   - Consider both skill breadth AND depth, not just keyword count
-   - A candidate strong in 7 of 8 critical skills is better than one weak in all 10
+STEP 2 — SCORE EACH CANDIDATE (0–100 integer)
+   - 90-100: Exceeds ALL requirements, has bonus skills
+   - 75-89: Meets ALL required skills, meets experience requirement
+   - 60-74: Meets MOST required skills (80%+)
+   - 40-59: Meets SOME required skills (50-79%)
+   - 0-39: Missing critical skills (<50%)
 
-3. EXPERIENCE
-   - Use PRE_EXTRACTED_EXPERIENCE if present in the candidate profile — this is authoritative
-   - If not present, infer from date ranges in the CV text
+STEP 3 — RANK
+Rank strictly by score descending. If two candidates have the same score, rank the one with more relevant experience higher.
 
-4. CANDIDATE NAME
-   - Use the VERIFIED_NAME tag if present in the candidate profile
-   - Otherwise use the exact name from the candidate profile header
-   - Do NOT use the filename or modify the name
+STEP 4 — EXPERIENCE
+Always use PRE_EXTRACTED_EXPERIENCE from the candidate profile if present — do not override it.
+If not present, calculate from date ranges in the CV text.
 
-5. REASON
-   - Write 2-3 clear sentences covering: skills matched, skills missing, experience fit
-   - Be specific — name actual skills, not vague statements
+STEP 5 — CANDIDATE NAME
+Copy exactly from VERIFIED_NAME tag. Do not modify, shorten, or add titles.
+
+STEP 6 — REASON
+Write exactly 2–3 sentences: (1) what skills matched, (2) what is missing, (3) experience fit.
+Be specific — name actual skills and tools, not vague statements like "good fit".
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON array with no markdown, no explanation, no code fences.
+Return ONLY a valid JSON array. No markdown, no explanation, no code fences.
 Each object must have these exact fields:
   rank (integer, 1 = best),
-  cv_id (string, copy exactly from the CV_ID tag in the candidate profile),
+  cv_id (string, copy exactly from CV_ID tag),
   candidate_name (string, copy exactly from VERIFIED_NAME tag),
   score (integer 0-100),
   reason (string),
-  experience_years (float),
-  key_strengths (string),
+  experience_years (float, from PRE_EXTRACTED_EXPERIENCE if available),
+  key_strengths (string, comma-separated list of matched skills),
   skills_matched (integer),
-  skills_missing (string, comma-separated)
+  skills_missing (string, comma-separated list of missing skills)
 """
 
 
@@ -142,9 +139,18 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
         stem = re.sub(r'[_\-\s]*\d+[Yy][_\-\s]*\d*[Mm]?\s*$', '', stem)  # strip "6y_4m", "3Y 0M"
         stem = re.sub(r'[_\-\s]*\d+$', '', stem)  # strip trailing numbers
         name = stem.replace('_', ' ').replace('-', ' ').strip().title()
+        # Strip job title suffixes — match partial words too (e.g. "Transitin", "Prog")
+        name = re.sub(r'\s+(?:Senior|Junior|Lead|Head|Director|Manager|Analyst|Engineer|Developer|Consultant|Coordinator|Specialist|Associate|Intern|Officer|Transition|Transit|Program|Prog|PMO)\w*.*$', '', name, flags=re.IGNORECASE).strip()
         exp_years = extract_experience_years(text)
+        # Use deterministic ID based on filename for consistency across runs
+        cv_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, fname))
+        # Embed metadata directly into raw_text so it's always present in retrieved output
+        annotations = f"CV_ID: {cv_id} | VERIFIED_NAME: {name}"
+        if exp_years is not None:
+            annotations += f" | PRE_EXTRACTED_EXPERIENCE: {exp_years} years"
+        full_text = f"[{annotations}]\n{full_text}"
         cvs.append(CV(
-            id=str(uuid.uuid4()),
+            id=cv_id,
             candidate_name=name,
             raw_text=full_text,
             experience_years=exp_years
@@ -153,9 +159,10 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
     seen_names: set = set()
     unique_cvs = []
     for cv in cvs:
-        key = cv.candidate_name.lower().strip()
-        if key not in seen_names:
-            seen_names.add(key)
+        # Normalize name: remove job titles and extra whitespace for comparison
+        normalized = re.sub(r'\s+(Transition|Senior|Junior|Lead|Manager|Analyst|Engineer|Developer|Consultant|Coordinator|Specialist|Associate).*$', '', cv.candidate_name, flags=re.IGNORECASE).strip().lower()
+        if normalized not in seen_names:
+            seen_names.add(normalized)
             unique_cvs.append(cv)
         else:
             logger.warning(f"Duplicate CV skipped: {cv.candidate_name}")
@@ -212,18 +219,8 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
     kernel.add_plugin(CVRetrievalPlugin(vs), plugin_name="retrieval")
     retrieve_fn = kernel.get_function(plugin_name="retrieval", function_name="retrieve")
     retrieved = await _invoke_with_retry(kernel, retrieve_fn, query=jd.requirements, top_k=len(cvs))
-
-    # Inject pre-extracted experience, verified name, and a stable CV_ID into retrieved text
     retrieved_str = str(retrieved).strip()
-    cv_id_map = {}  # cv_id -> CV object for authoritative name lookup
-    for cv in cvs:
-        cv_id_map[cv.id] = cv
-        old = f"{cv.candidate_name}\n"
-        annotations = [f"CV_ID: {cv.id}", f"VERIFIED_NAME: {cv.candidate_name}"]
-        if cv.experience_years is not None:
-            annotations.append(f"PRE_EXTRACTED_EXPERIENCE: {cv.experience_years} years")
-        new = f"{cv.candidate_name} [{', '.join(annotations)}]\n"
-        retrieved_str = retrieved_str.replace(old, new, 1)
+    cv_id_map = {cv.id: cv for cv in cvs}
 
     # Step 3: Rank candidates
     status_placeholder.info("🤖 Step 3/3: AI ranking candidates...")
@@ -237,6 +234,10 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
         if ranking_json.startswith("json"):
             ranking_json = ranking_json[4:]
         ranking_json = ranking_json.strip()
+
+    # Unescape HTML entities the LLM may have introduced
+    import html as html_lib
+    ranking_json = html_lib.unescape(ranking_json)
 
     items = json.loads(ranking_json)
     verified_names = {cv.candidate_name.lower(): cv.candidate_name for cv in cvs}

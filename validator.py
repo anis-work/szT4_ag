@@ -29,7 +29,13 @@ def validate_results(results: List[RankedResult]) -> List[RankedResult]:
     # Primary key: cv_id (if present), fallback: normalised name
     seen: dict = {}
     for result in valid:
-        key = result.cv_id if result.cv_id else result.candidate_name.lower().strip()
+        # Normalize name: strip job titles and lowercase for comparison
+        import re
+        normalized_name = re.sub(
+            r'\s+(?:Senior|Junior|Lead|Head|Director|Manager|Analyst|Engineer|Developer|Consultant|Coordinator|Specialist|Associate|Intern|Officer|Transition|PMO)\w*.*$',
+            '', result.candidate_name, flags=re.IGNORECASE
+        ).strip().lower()
+        key = normalized_name
         if key not in seen or result.score > seen[key].score:
             seen[key] = result
 

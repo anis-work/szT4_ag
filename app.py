@@ -47,14 +47,14 @@ if "show_results" not in st.session_state:
     st.session_state.show_results = False
 if "current_results" not in st.session_state:
     st.session_state.current_results = None
-if "uploaded_files" not in st.session_state:
-    st.session_state.uploaded_files = []
+if "file_uploader_key" not in st.session_state:
+    st.session_state.file_uploader_key = 0
 
 # Input section
 col1, col2 = st.columns([1, 1], gap="medium")
 
 with col1:
-    uploaded = render_file_upload_section(st.session_state.uploaded_files)
+    uploaded = render_file_upload_section(st.session_state.file_uploader_key)
 
 with col2:
     role, jd_text = render_job_details_section()
@@ -64,7 +64,6 @@ run = render_action_button(uploaded, role, jd_text)
 
 # Process analysis
 if run:
-    st.session_state.uploaded_files = uploaded
     status_placeholder = st.empty()
     try:
         kernel = get_kernel()
@@ -114,7 +113,7 @@ if st.session_state.show_results and st.session_state.current_results:
         if st.button("🔄 Analyze New Resumes", type="secondary", width='stretch'):
             st.session_state.show_results = False
             st.session_state.current_results = None
-            st.session_state.uploaded_files = []
+            st.session_state.file_uploader_key += 1
             st.rerun()
 
     st.markdown('<div class="section-title">🏆 Ranking Results</div>', unsafe_allow_html=True)

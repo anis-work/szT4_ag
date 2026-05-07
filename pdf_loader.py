@@ -208,29 +208,13 @@ def extract_candidate_name(text: str) -> Optional[str]:
 # ── Experience extraction ─────────────────────────────────────────────────────
 
 def extract_experience_years(text: str) -> Optional[float]:
-    """Parse total years of experience from raw CV text.
+    """Parse total years of experience from raw CV text by summing date ranges.
 
-    Handles formats from Naukri, LinkedIn, and standard resumes:
-    - Naukri header: '6y 4m', '6 Years 4 Months'
-    - Explicit: '6 years of experience', '6+ years'
-    - Date ranges: 'Jan 2018 - Present', '2018 - 2024'
-    Returns None if no experience can be reliably determined.
+    Prioritizes date range calculation over explicit statements since date ranges
+    are more accurate. Falls back to explicit statements only if no ranges found.
     """
     today = datetime.now(timezone.utc).date()
 
-    # Pattern 1: Naukri style — "6y 4m" or "6 Years 4 Months"
-    m = re.search(r'(\d+)\s*[Yy](?:ears?|rs?)?[\s,]*(\d+)?\s*[Mm](?:onths?)?', text)
-    if m:
-        years = int(m.group(1))
-        months = int(m.group(2)) if m.group(2) else 0
-        return round(years + months / 12, 1)
-
-    # Pattern 2: Explicit statement — "X years of experience" / "X+ years"
-    m = re.search(r'(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)', text, re.IGNORECASE)
-    if m:
-        return float(m.group(1))
-
-    # Pattern 3: Sum date ranges
     MONTHS = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
                'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
 
@@ -238,19 +222,20 @@ def extract_experience_years(text: str) -> Optional[float]:
         s = s.strip().lower()
         if s in ('present', 'current', 'till date', 'till now', 'ongoing'):
             return today
-        m2 = re.match(r'([a-z]+)[\s,]+(\d{4})', s)
-        if m2:
-            mon = MONTHS.get(m2.group(1)[:3])
+        m = re.match(r'([a-z]+)[\s,]+(\d{4})', s)
+        if m:
+            mon = MONTHS.get(m.group(1)[:3])
             if mon:
-                return date(int(m2.group(2)), mon, 1)
-        m2 = re.match(r'^(\d{4})$', s)
-        if m2:
-            return date(int(m2.group(1)), 1, 1)
-        m2 = re.match(r'(\d{1,2})[/-](\d{4})', s)
-        if m2:
-            return date(int(m2.group(2)), int(m2.group(1)), 1)
+                return date(int(m.group(2)), mon, 1)
+        m = re.match(r'^(\d{4})$', s)
+        if m:
+            return date(int(m.group(1)), 1, 1)
+        m = re.match(r'(\d{1,2})[/-](\d{4})', s)
+        if m:
+            return date(int(m.group(2)), int(m.group(1)), 1)
         return None
 
+    # Strategy 1: Sum date ranges (most accurate)
     date_range_pattern = re.compile(
         r'([A-Za-z]+[\s,]+\d{4}|\d{4}|\d{1,2}[/-]\d{4})'
         r'\s*[-\u2013\u2014to]+\s*'
@@ -266,6 +251,18 @@ def extract_experience_years(text: str) -> Optional[float]:
 
     if total_days > 180:
         return round(total_days / 365.25, 1)
+
+    # Strategy 2: Naukri style header — "6y 4m" or "6 Years 4 Months"
+    m = re.search(r'(\d+)\s*[Yy](?:ears?|rs?)?[\s,]*(\d+)?\s*[Mm](?:onths?)?', text)
+    if m:
+        years = int(m.group(1))
+        months = int(m.group(2)) if m.group(2) else 0
+        return round(years + months / 12, 1)
+
+    # Strategy 3: Explicit statement — "X years of experience" / "X+ years"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)', text, re.IGNORECASE)
+    if m:
+        return float(m.group(1))
 
     return None
 

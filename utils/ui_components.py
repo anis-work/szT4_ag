@@ -64,7 +64,7 @@ def render_header() -> None:
     st.markdown(_render_template("header.html", logo=logo_html), unsafe_allow_html=True)
 
 
-def render_file_upload_section(uploaded_files) -> list:
+def render_file_upload_section(uploader_key) -> list:
     """Render the resume upload section and return uploaded files."""
     st.markdown('<div class="section-title">📁 Upload Resumes</div>', unsafe_allow_html=True)
 
@@ -74,6 +74,7 @@ def render_file_upload_section(uploaded_files) -> list:
         accept_multiple_files=True,
         label_visibility="collapsed",
         help="Upload candidate resumes in PDF or DOCX format",
+        key=f"file_uploader_{uploader_key}"
     )
 
     if uploaded:
@@ -149,14 +150,15 @@ def render_stats_bar(results: list) -> None:
 
 def render_results_table(results: list) -> None:
     """Render the ranked candidates dataframe with interactive toolbar."""
+    import html as html_lib
     df = pd.DataFrame([{
         "Rank": r.rank,
         "Candidate Name": r.candidate_name,
         "Score": r.score,
         "Experience (yrs)": r.experience_years,
-        "Skills Missing": r.skills_missing,
-        "Key Strengths": r.key_strengths,
-        "Assessment": r.reason,
+        "Skills Missing": html_lib.unescape(r.skills_missing or ""),
+        "Key Strengths": html_lib.unescape(r.key_strengths or ""),
+        "Assessment": html_lib.unescape(r.reason or ""),
     } for r in results])
 
     st.dataframe(

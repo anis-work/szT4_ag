@@ -111,7 +111,7 @@ if run:
 if st.session_state.show_results and st.session_state.current_results:
     col_new, col_space = st.columns([1, 3])
     with col_new:
-        if st.button("🔄 Analyze New Resumes", type="secondary", use_container_width=True):
+        if st.button("🔄 Analyze New Resumes", type="secondary", width='stretch'):
             st.session_state.show_results = False
             st.session_state.current_results = None
             st.session_state.uploaded_files = []

@@ -6,6 +6,7 @@ import tempfile
 import os
 import uuid
 import logging
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -21,13 +22,12 @@ from models import CV, JobDescription, RankedResult
 from embedder import embed_text
 from vector_store import VectorStore
 from plugins.cv_retrieval_plugin import CVRetrievalPlugin
-from pdf_loader import _extract_text, _chunk_text, extract_experience_years, extract_candidate_name
-from taxonomy.resolver import build_enriched_jd
+from pdf_loader import _extract_text, _chunk_text, extract_experience_years
 from validator import validate_results
 
 logger = logging.getLogger(__name__)
 
-RANKING_PROMPT = """You are a STRICT technical recruiter. Evaluate each candidate against the job description.
+RANKING_PROMPT = """You are a fair and balanced technical recruiter. Evaluate each candidate holistically against the job description.
 
 JOB DESCRIPTION:
 {{$job_description}}
@@ -35,47 +35,41 @@ JOB DESCRIPTION:
 CANDIDATE PROFILES:
 {{$retrieved_cvs}}
 
-MANDATORY EVALUATION PROCESS - follow every step in order:
+EVALUATION APPROACH:
 
-STEP 1 - EXTRACT REQUIRED SKILLS FROM JD
-List every required skill, technology, certification, and experience level explicitly mentioned.
-Count them. This is your TOTAL_SKILLS number.
+1. SKILLS ASSESSMENT
+   - Identify required skills from the JD
+   - Check each candidate for explicit evidence of each skill
+   - Count matched skills as skills_matched, list missing ones in skills_missing
 
-STEP 2 - FOR EACH CANDIDATE, DO A SKILL-BY-SKILL CHECKLIST
-Go through every required skill one by one.
-Mark each as PRESENT (explicit evidence in CV) or MISSING (not mentioned or no evidence).
-Count PRESENT skills - this is skills_matched.
-List MISSING skills in skills_missing.
-Do NOT guess or infer - only count what is explicitly stated in the CV.
+2. HOLISTIC SCORING (do not use a rigid formula)
+   - 90-100: Exceptional fit — meets all requirements, has bonus skills
+   - 75-89: Strong fit — meets most required skills and experience
+   - 60-74: Good fit — meets majority of skills, minor gaps
+   - 40-59: Partial fit — meets some skills, notable gaps
+   - 0-39: Weak fit — missing critical skills or significantly under-experienced
+   - Consider both skill breadth AND depth, not just keyword count
+   - A candidate strong in 7 of 8 critical skills is better than one weak in all 10
 
-STEP 3 - COMPUTE SCORE FROM THE CHECKLIST
-Base score = (skills_matched / TOTAL_SKILLS) * 100
-Adjustments:
-  Experience meets requirement: +0 to +5
-  Experience below requirement: -10 to -20
-  Each missing CRITICAL skill (mentioned 2+ times in JD): additional -5
-  Exceptional bonus skills beyond JD: +0 to +5
-Final score must be mathematically consistent with skills_matched / TOTAL_SKILLS ratio.
+3. EXPERIENCE
+   - Use PRE_EXTRACTED_EXPERIENCE if present in the candidate profile — this is authoritative
+   - If not present, infer from date ranges in the CV text
 
-STEP 4 - WRITE THE REASON
-Must reference exact skills_matched count and TOTAL_SKILLS.
-Format: Matched X of Y required skills. Has: [matched skills]. Missing: [missing skills]. [1 sentence on experience fit].
-Do NOT write a reason that contradicts the score or skills_matched count.
+4. CANDIDATE NAME
+   - Use the VERIFIED_NAME tag if present in the candidate profile
+   - Otherwise use the exact name from the candidate profile header
+   - Do NOT use the filename or modify the name
 
-STEP 5 - EXPERIENCE
-Use PRE_EXTRACTED_EXPERIENCE if present in the candidate profile - this is authoritative.
-If not present, infer from date ranges in the CV text.
-
-STEP 6 - CANDIDATE NAME
-Use the VERIFIED_NAME tag if present in the candidate profile.
-Otherwise use the exact name from the candidate profile header.
-Do NOT use the filename or modify the name.
+5. REASON
+   - Write 2-3 clear sentences covering: skills matched, skills missing, experience fit
+   - Be specific — name actual skills, not vague statements
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON array with no markdown, no explanation, no code fences.
 Each object must have these exact fields:
   rank (integer, 1 = best),
-  candidate_name (string),
+  cv_id (string, copy exactly from the CV_ID tag in the candidate profile),
+  candidate_name (string, copy exactly from VERIFIED_NAME tag),
   score (integer 0-100),
   reason (string),
   experience_years (float),
@@ -142,9 +136,12 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
             skipped.append((fname, reason))
             continue
         full_text = "\n\n---\n\n".join(_chunk_text(text))
-        # Use name extracted from CV text; fall back to cleaned filename
-        filename_name = Path(fname).stem.replace("_", " ").replace("-", " ").title()
-        name = extract_candidate_name(text) or filename_name
+        # Use filename as candidate name - simple and reliable
+        stem = Path(fname).stem
+        stem = re.sub(r'^(Naukri|LinkedIn|Indeed|Resume|CV)[_\-\s]+', '', stem, flags=re.IGNORECASE)
+        stem = re.sub(r'[_\-\s]*\d+[Yy][_\-\s]*\d*[Mm]?\s*$', '', stem)  # strip "6y_4m", "3Y 0M"
+        stem = re.sub(r'[_\-\s]*\d+$', '', stem)  # strip trailing numbers
+        name = stem.replace('_', ' ').replace('-', ' ').strip().title()
         exp_years = extract_experience_years(text)
         cvs.append(CV(
             id=str(uuid.uuid4()),
@@ -152,19 +149,45 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
             raw_text=full_text,
             experience_years=exp_years
         ))
-    return cvs, skipped
+    # Deduplicate CVs by candidate name (keep first occurrence)
+    seen_names: set = set()
+    unique_cvs = []
+    for cv in cvs:
+        key = cv.candidate_name.lower().strip()
+        if key not in seen_names:
+            seen_names.add(key)
+            unique_cvs.append(cv)
+        else:
+            logger.warning(f"Duplicate CV skipped: {cv.candidate_name}")
+    return unique_cvs, skipped
 
 
-async def _invoke_with_retry(kernel, fn, retries=5, delay=30, **kwargs):
+async def _invoke_with_retry(kernel, fn, retries=5, delay=15, **kwargs):
     """Invoke kernel function with retry logic for transient errors."""
+    from semantic_kernel.exceptions.kernel_exceptions import KernelInvokeException
+    from semantic_kernel.exceptions.function_exceptions import FunctionExecutionException
+
     for attempt in range(1, retries + 1):
         try:
             return await kernel.invoke(fn, **kwargs)
-        except Exception as e:
-            msg = str(e) + str(getattr(e, '__cause__', ''))
-            if attempt < retries and any(x in msg for x in ("503", "429", "UNAVAILABLE", "EXHAUSTED", "ServerError")):
+        except (KernelInvokeException, FunctionExecutionException, Exception) as e:
+            # Walk full exception cause chain to find transient signal
+            cause = e
+            msg_parts = []
+            while cause:
+                msg_parts.append(str(cause))
+                cause = getattr(cause, '__cause__', None) or getattr(cause, '__context__', None)
+            full_msg = ' '.join(msg_parts)
+
+            is_transient = any(x in full_msg for x in (
+                "503", "429", "UNAVAILABLE", "EXHAUSTED", "ServerError",
+                "high demand", "temporarily", "overloaded", "quota"
+            ))
+
+            if attempt < retries and is_transient:
                 wait = delay * attempt
-                st.toast(f"⏳ Service busy — retrying ({attempt}/{retries}) in {wait}s...")
+                st.toast(f"⏳ Google API busy — retrying ({attempt}/{retries}) in {wait}s...")
+                logger.warning(f"Transient error on attempt {attempt}, retrying in {wait}s: {str(e)[:120]}")
                 await asyncio.sleep(wait)
             else:
                 raise
@@ -182,24 +205,23 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
 
     # Step 2: Retrieve relevant candidates
     status_placeholder.info("🔍 Step 2/3: Retrieving relevant candidates...")
-    # Enrich JD with Sulzer taxonomy implied skills (zero API calls)
-    enriched_requirements = build_enriched_jd(jd.role, jd.requirements)
     vs = VectorStore()
     for cv in cvs:
         vs.add(cv)
 
     kernel.add_plugin(CVRetrievalPlugin(vs), plugin_name="retrieval")
     retrieve_fn = kernel.get_function(plugin_name="retrieval", function_name="retrieve")
-    retrieved = await _invoke_with_retry(kernel, retrieve_fn, query=enriched_requirements, top_k=len(cvs))
+    retrieved = await _invoke_with_retry(kernel, retrieve_fn, query=jd.requirements, top_k=len(cvs))
 
-    # Inject pre-extracted experience and verified name into retrieved text
+    # Inject pre-extracted experience, verified name, and a stable CV_ID into retrieved text
     retrieved_str = str(retrieved).strip()
+    cv_id_map = {}  # cv_id -> CV object for authoritative name lookup
     for cv in cvs:
+        cv_id_map[cv.id] = cv
         old = f"{cv.candidate_name}\n"
-        annotations = []
+        annotations = [f"CV_ID: {cv.id}", f"VERIFIED_NAME: {cv.candidate_name}"]
         if cv.experience_years is not None:
             annotations.append(f"PRE_EXTRACTED_EXPERIENCE: {cv.experience_years} years")
-        annotations.append(f"VERIFIED_NAME: {cv.candidate_name}")
         new = f"{cv.candidate_name} [{', '.join(annotations)}]\n"
         retrieved_str = retrieved_str.replace(old, new, 1)
 
@@ -207,7 +229,7 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
     status_placeholder.info("🤖 Step 3/3: AI ranking candidates...")
     rank_fn = kernel.get_function(plugin_name="ranking", function_name="rank_candidates")
     result = await _invoke_with_retry(kernel, rank_fn,
-                                      job_description=enriched_requirements,
+                                      job_description=jd.requirements,
                                       retrieved_cvs=retrieved_str)
     ranking_json = str(result).strip()
     if ranking_json.startswith("```"):
@@ -223,9 +245,14 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
     for item in items:
         try:
             result = RankedResult(**item)
-            matched = verified_names.get(result.candidate_name.lower())
-            if matched:
-                result = result.model_copy(update={"candidate_name": matched})
+            # Use cv_id for authoritative name — most reliable
+            if result.cv_id and result.cv_id in cv_id_map:
+                result = result.model_copy(update={"candidate_name": cv_id_map[result.cv_id].candidate_name})
+            else:
+                # Fallback: fuzzy match by lowercased name
+                matched = verified_names.get(result.candidate_name.lower())
+                if matched:
+                    result = result.model_copy(update={"candidate_name": matched})
             results.append(result)
         except Exception as e:
             logger.warning(f"Failed to parse result item: {e}")

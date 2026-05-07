@@ -13,52 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 def validate_results(results: List[RankedResult]) -> List[RankedResult]:
-    """Validate and sanitize ranking results.
-    
-    Checks:
-    - All ranks are unique and sequential
-    - All scores are between 0 and 100
-    - All reasons are non-empty
-    
-    Args:
-        results: List of RankedResult objects to validate.
-    
-    Returns:
-        List of valid RankedResult objects (invalid entries removed).
-    """
-    valid_results = []
-    ranks_seen = set()
-    
+    """Validate, deduplicate, and sanitize ranking results."""
+    # Step 1: basic validation
+    valid = []
     for result in results:
-        errors = []
-        
-        # Validate rank uniqueness
-        if result.rank in ranks_seen:
-            errors.append(f"Duplicate rank {result.rank}")
-        ranks_seen.add(result.rank)
-        
-        # Validate score range
         if not (0 <= result.score <= 100):
-            errors.append(f"Score {result.score} out of range [0-100]")
-        
-        # Validate reason is not empty
+            logger.warning(f"Score out of range for {result.candidate_name}: {result.score}")
+            continue
         if not result.reason or not result.reason.strip():
-            errors.append("Reason is empty")
-        
-        if errors:
-            logger.warning(
-                f"Invalid result for {result.candidate_name}: {'; '.join(errors)}"
-            )
-        else:
-            valid_results.append(result)
-    
-    # Log summary
-    logger.info(
-        f"Validated {len(results)} results: {len(valid_results)} valid, "
-        f"{len(results) - len(valid_results)} invalid"
-    )
-    
-    # Sort by rank
-    valid_results.sort(key=lambda r: r.rank)
+            logger.warning(f"Empty reason for {result.candidate_name}")
+            continue
+        valid.append(result)
 
-    return valid_results
+    # Step 2: deduplicate — keep highest score per candidate
+    # Primary key: cv_id (if present), fallback: normalised name
+    seen: dict = {}
+    for result in valid:
+        key = result.cv_id if result.cv_id else result.candidate_name.lower().strip()
+        if key not in seen or result.score > seen[key].score:
+            seen[key] = result
+
+    deduped = list(seen.values())
+
+    # Step 3: re-rank sequentially by score
+    deduped.sort(key=lambda r: r.score, reverse=True)
+    final = [
+        r.model_copy(update={"rank": i + 1})
+        for i, r in enumerate(deduped)
+    ]
+
+    logger.info(f"Validated {len(results)} → {len(valid)} valid → {len(final)} after dedup")
+    return final

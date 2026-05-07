@@ -147,23 +147,60 @@ def extract_candidate_name(text: str) -> Optional[str]:
 
     Strategy (in order of confidence):
     1. Explicit 'Name:' / 'Full Name:' label in first 30 lines
-    2. First line in top 10 that matches a proper name pattern
+    2. First line in top 10 that looks like a personal name
     Returns None so caller can fall back to filename.
     """
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    name_re = re.compile(r'^[A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){1,3}$')
+
+    # Proper name: 2-4 words, each Title-cased, only letters and spaces, no digits
+    # Excludes single words, all-caps lines (company names), and lines with punctuation
+    name_re = re.compile(r'^[A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3}$')
+    
+    # Single word name pattern (for cases like "Sohebshaikh" - at least 6 chars, Title case)
+    single_name_re = re.compile(r'^[A-Z][a-z]{5,}$')
+
+    # Common non-name words that appear at top of resumes
+    _EXCLUDE = {'resume', 'curriculum', 'vitae', 'profile', 'summary', 'objective',
+                'contact', 'address', 'email', 'phone', 'mobile', 'linkedin',
+                'engineer', 'manager', 'developer', 'analyst', 'consultant',
+                'senior', 'junior', 'lead', 'head', 'director', 'officer',
+                'transition', 'experience', 'education', 'skills', 'projects',
+                'professional', 'personal', 'career', 'employment', 'work',
+                'qualifications', 'certifications', 'achievements', 'about'}
+
     label_re = re.compile(r'^(?:full\s*)?name\s*[:\-]\s*(.+)$', re.IGNORECASE)
 
+    # Strategy 1: explicit label
     for line in lines[:30]:
         m = label_re.match(line)
         if m:
             candidate = m.group(1).strip()
-            if name_re.match(candidate):
+            # Remove job titles from the end
+            candidate = re.sub(r'\s+(Transition|Senior|Junior|Lead|Manager|Analyst|Engineer|Developer|Consultant).*$', '', candidate, flags=re.IGNORECASE)
+            if name_re.match(candidate) and candidate.lower().split()[0] not in _EXCLUDE:
                 return candidate
 
+    # Strategy 2: first line in top 10 that looks like a personal name (skip pure numbers)
     for line in lines[:10]:
-        if name_re.match(line):
-            return line
+        # Skip lines that are just numbers or start with numbers
+        if re.match(r'^\d+$', line) or re.match(r'^\d+\s', line):
+            continue
+        
+        # Skip common section headers (case-insensitive check)
+        line_lower = line.lower()
+        if any(excl in line_lower for excl in ['summary', 'profile', 'objective', 'experience', 'education', 'skills']):
+            continue
+        
+        # Remove job titles/designations from the line
+        cleaned = re.sub(r'\s+(Transition|Senior|Junior|Lead|Manager|Analyst|Engineer|Developer|Consultant).*$', '', line, flags=re.IGNORECASE).strip()
+        
+        # Check for proper multi-word name
+        if name_re.match(cleaned) and cleaned.lower().split()[0] not in _EXCLUDE:
+            return cleaned
+        
+        # Check for single-word name (fallback for concatenated names)
+        if single_name_re.match(cleaned) and cleaned.lower() not in _EXCLUDE:
+            return cleaned
 
     return None
 

@@ -119,7 +119,7 @@ def render_action_button(uploaded, role: str, jd_text: str) -> bool:
 
     col_btn, col_status = st.columns([1, 2])
     with col_btn:
-        run = st.button("🚀 Analyze Candidates", type="primary", disabled=not ready, use_container_width=True)
+        run = st.button("🚀 Analyze Candidates", type="primary", disabled=not ready, width='stretch')
     with col_status:
         if not uploaded:
             st.caption("⚠️ Please upload at least one resume")
@@ -154,7 +154,6 @@ def render_results_table(results: list) -> None:
         "Candidate Name": r.candidate_name,
         "Score": r.score,
         "Experience (yrs)": r.experience_years,
-        "Skills Matched": r.skills_matched,
         "Skills Missing": r.skills_missing,
         "Key Strengths": r.key_strengths,
         "Assessment": r.reason,
@@ -162,14 +161,13 @@ def render_results_table(results: list) -> None:
 
     st.dataframe(
         df,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         column_config={
             "Rank": st.column_config.NumberColumn("Rank", width="small"),
             "Candidate Name": st.column_config.TextColumn("Candidate Name", width="medium"),
             "Score": st.column_config.NumberColumn("Score", width="small"),
             "Experience (yrs)": st.column_config.NumberColumn("Experience", width="small"),
-            "Skills Matched": st.column_config.NumberColumn("Skills ✓", width="small"),
             "Skills Missing": st.column_config.TextColumn("Missing Skills", width="medium"),
             "Key Strengths": st.column_config.TextColumn("Key Strengths", width="large"),
             "Assessment": st.column_config.TextColumn("Assessment", width="large"),
@@ -185,7 +183,6 @@ def render_export_section(results: list, role: str) -> None:
         "Candidate Name": r.candidate_name,
         "Score": r.score,
         "Experience (yrs)": r.experience_years,
-        "Skills Matched": r.skills_matched,
         "Skills Missing": r.skills_missing,
         "Key Strengths": r.key_strengths,
         "Assessment": r.reason,
@@ -202,7 +199,7 @@ def render_export_section(results: list, role: str) -> None:
             data=csv_buffer.getvalue(),
             file_name=f"cv_ranking_{role.replace(' ', '_').lower()}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width='stretch',
         )
     with col_caption:
         st.caption(f"📊 Results for: **{role}** | {len(results)} candidates shown")

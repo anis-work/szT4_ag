@@ -20,11 +20,12 @@ class JobDescription(BaseModel):
 
 class RankedResult(BaseModel):
     rank: int = Field(..., description="Ranking position (1-based)")
+    cv_id: str = Field(default="", description="CV object ID for authoritative name lookup")
     candidate_name: str = Field(..., description="Name of the candidate")
     score: int = Field(..., ge=0, le=100, description="Ranking score 0-100")
     reason: str = Field(..., description="Explanation for the ranking")
-    experience_years: float = Field(default=0.0, description="Total years of experience extracted from CV")
-    key_strengths: str = Field(default="", description="Brief summary of candidate's key strengths for comparison")
-    interview_format: str = Field(default="HR", description="Recommended interview format: Technical / HR / Panel")
+    experience_years: float = Field(default=0.0, description="Total years of experience")
+    key_strengths: str = Field(default="", description="Key strengths matching JD")
+    interview_format: str = Field(default="HR", description="Recommended interview format")
     skills_matched: int = Field(default=0, description="Number of required skills matched")
     skills_missing: str = Field(default="", description="Critical skills missing from CV")

@@ -132,11 +132,12 @@ def _extract_text_docx(path: str) -> str:
 
 
 def _extract_text(path: str) -> str:
-    ext = Path(path).suffix.lower()
+    real_path = os.path.realpath(path)
+    ext = Path(real_path).suffix.lower()
     if ext == ".pdf":
-        return _extract_text_pdf(path)
+        return _extract_text_pdf(real_path)
     elif ext in (".docx", ".doc"):
-        return _extract_text_docx(path)
+        return _extract_text_docx(real_path)
     raise ValueError(f"Unsupported file type: {ext}")
 
 
@@ -208,12 +209,12 @@ def extract_candidate_name(text: str) -> Optional[str]:
 # ── Experience extraction ─────────────────────────────────────────────────────
 
 def extract_experience_years(text: str) -> Optional[float]:
-    """Parse total years of experience from raw CV text by summing date ranges.
-
-    Prioritizes date range calculation over explicit statements since date ranges
-    are more accurate. Falls back to explicit statements only if no ranges found.
+    """Parse total years of professional work experience from raw CV text.
+    Only counts actual employment. Excludes internships, education, courses.
+    Validates results to prevent absurd values (e.g. thousands of years).
     """
     today = datetime.now(timezone.utc).date()
+    MAX_REASONABLE_YEARS = 50  # sanity cap
 
     MONTHS = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
                'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
@@ -225,44 +226,112 @@ def extract_experience_years(text: str) -> Optional[float]:
         m = re.match(r'([a-z]+)[\s,]+(\d{4})', s)
         if m:
             mon = MONTHS.get(m.group(1)[:3])
-            if mon:
-                return date(int(m.group(2)), mon, 1)
+            yr = int(m.group(2))
+            if mon and 1980 <= yr <= today.year + 1:
+                return date(yr, mon, 1)
         m = re.match(r'^(\d{4})$', s)
         if m:
-            return date(int(m.group(1)), 1, 1)
+            yr = int(m.group(1))
+            if 1980 <= yr <= today.year + 1:
+                return date(yr, 1, 1)
         m = re.match(r'(\d{1,2})[/-](\d{4})', s)
         if m:
-            return date(int(m.group(2)), int(m.group(1)), 1)
+            yr = int(m.group(2))
+            mon = int(m.group(1))
+            if 1980 <= yr <= today.year + 1 and 1 <= mon <= 12:
+                return date(yr, mon, 1)
         return None
 
-    # Strategy 1: Sum date ranges (most accurate)
+    # Strategy 1: Naukri style header — "6y 4m" or "6 Years 4 Months"
+    # Must appear near top of text (first 500 chars) to avoid false matches
+    header_text = text[:500]
+    m = re.search(r'\b(\d{1,2})\s*[Yy](?:ears?|rs?)?[\s,]*(\d{1,2})?\s*[Mm](?:onths?)?\b', header_text)
+    if m:
+        years = int(m.group(1))
+        months = int(m.group(2)) if m.group(2) else 0
+        result = round(years + months / 12, 1)
+        if result <= MAX_REASONABLE_YEARS:
+            return result
+
+    # Strategy 2: Explicit statement — "X years of experience" / "X+ years"
+    m = re.search(
+        r'\b(\d{1,2}(?:\.\d)?)\s*\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)\b',
+        text, re.IGNORECASE
+    )
+    if m:
+        val = float(m.group(1))
+        if val <= MAX_REASONABLE_YEARS:
+            return val
+
+    # Strategy 3: Sum professional employment date ranges only
+    lines = text.splitlines()
+
+    work_section_re = re.compile(
+        r'^(professional\s+experience|work\s+experience|employment|experience|career\s+history|work\s+history)',
+        re.IGNORECASE
+    )
+    non_work_section_re = re.compile(
+        r'^(education|academic|internship|training|certification|course|project|publication|achievement|extra|volunteer)',
+        re.IGNORECASE
+    )
+
+    in_work_section = False
+    work_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if work_section_re.match(stripped):
+            in_work_section = True
+            continue
+        if in_work_section and non_work_section_re.match(stripped):
+            in_work_section = False
+        if in_work_section:
+            work_lines.append(stripped)
+
+    if not work_lines:
+        skip_re = re.compile(
+            r'intern|trainee|apprentice|bachelor|master|b\.?tech|m\.?tech|b\.?e\b|m\.?e\b|pgdm|mba|phd|'
+            r'university|college|institute|school',
+            re.IGNORECASE
+        )
+        work_lines = [l.strip() for l in lines if not skip_re.search(l)]
+
+    work_text = '\n'.join(work_lines)
+
     date_range_pattern = re.compile(
         r'([A-Za-z]+[\s,]+\d{4}|\d{4}|\d{1,2}[/-]\d{4})'
         r'\s*[-\u2013\u2014to]+\s*'
         r'([A-Za-z]+[\s,]+\d{4}|\d{4}|present|current|till\s*date|till\s*now|ongoing)',
         re.IGNORECASE
     )
-    total_days = 0
-    for match in date_range_pattern.finditer(text):
+
+    # Collect non-overlapping intervals to avoid double-counting overlapping roles
+    intervals = []
+    for match in date_range_pattern.finditer(work_text):
         start = _parse_date(match.group(1))
         end = _parse_date(match.group(2))
         if start and end and end >= start:
-            total_days += (end - start).days
+            # Clamp end to today (future end dates are fine, e.g. "Present")
+            end = min(end, today)
+            if end > start:
+                intervals.append((start, end))
 
-    if total_days > 180:
-        return round(total_days / 365.25, 1)
+    if not intervals:
+        return None
 
-    # Strategy 2: Naukri style header — "6y 4m" or "6 Years 4 Months"
-    m = re.search(r'(\d+)\s*[Yy](?:ears?|rs?)?[\s,]*(\d+)?\s*[Mm](?:onths?)?', text)
-    if m:
-        years = int(m.group(1))
-        months = int(m.group(2)) if m.group(2) else 0
-        return round(years + months / 12, 1)
+    # Merge overlapping intervals to avoid double-counting parallel roles
+    intervals.sort(key=lambda x: x[0])
+    merged = [intervals[0]]
+    for start, end in intervals[1:]:
+        if start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
 
-    # Strategy 3: Explicit statement — "X years of experience" / "X+ years"
-    m = re.search(r'(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)', text, re.IGNORECASE)
-    if m:
-        return float(m.group(1))
+    total_days = sum((e - s).days for s, e in merged)
+    result = round(total_days / 365.25, 1)
+
+    if 0 < result <= MAX_REASONABLE_YEARS:
+        return result
 
     return None
 

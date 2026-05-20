@@ -9,6 +9,7 @@ class CV(BaseModel):
     candidate_name: str = Field(..., description="Full name of the candidate")
     raw_text: str = Field(..., description="Full text content of the CV")
     embedding: Optional[List[float]] = Field(default=None)
+    chunk_embeddings: Optional[List[List[float]]] = Field(default=None)
     experience_years: Optional[float] = Field(default=None)
 
 

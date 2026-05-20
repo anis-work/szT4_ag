@@ -33,8 +33,8 @@ TOP_K=3
 
 > `TOP_K` controls how many CVs are retrieved from the vector store before ranking. When you use `--folder` mode it auto-scales to the total number of CVs you upload, so every resume gets ranked.
 
----
 
+---
 ## 2. Prepare your files
 
 ### Resumes

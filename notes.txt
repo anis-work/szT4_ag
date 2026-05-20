@@ -1,8 +1,6 @@
 To run: 
 ``
-cd "c:\Users\shaiani\OneDrive - Sulzer Ltd\Desktop\DmnLrd\Proj\HR Proj\ag_sz__t4"
-venv\Scripts\activate.bat
-streamlit run app.py
+python -m streamlit run app.py
 ``
 
 ## Concrete difference in scoring quality:

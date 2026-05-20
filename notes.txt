@@ -1,0 +1,16 @@
+To run: 
+``
+cd "c:\Users\shaiani\OneDrive - Sulzer Ltd\Desktop\DmnLrd\Proj\HR Proj\ag_sz__t4"
+venv\Scripts\activate.bat
+streamlit run app.py
+``
+
+## Concrete difference in scoring quality:
+
+Right now if you rank a Mechanical Engineer and a PMO Analyst using the same prompt, the LLM has no context about what Sulzer specifically expects from each. With taxonomy routing:
+
+1. A PMO role automatically checks for RAID logs, transition playbooks, governance frameworks
+2. An Engineering role automatically checks for CAD, FEA, specific domain certifications
+3. A Finance role automatically checks for ERP, financial modelling, audit experience
+
+Even if the JD doesn't explicitly mention these — the taxonomy fills the gap.

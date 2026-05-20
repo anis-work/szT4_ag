@@ -75,7 +75,7 @@ pip install -r requirements.txt
 ### 3. Set up your API key
 
 ```bash
-cp .env.example .env
+cp .env
 ```
 
 Open `.env` and add your Google AI API key:

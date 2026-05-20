@@ -64,22 +64,22 @@ def render_header() -> None:
     st.markdown(_render_template("header.html", logo=logo_html), unsafe_allow_html=True)
 
 
-def render_file_upload_section(uploader_key) -> list:
+def render_file_upload_section(uploaded_files) -> list:
     """Render the resume upload section and return uploaded files."""
+    st.markdown('<div class="input-section">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📁 Upload Resumes</div>', unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
-        "uploader",
+        "Upload PDF or DOCX files",
         type=["pdf", "docx", "doc"],
         accept_multiple_files=True,
         label_visibility="collapsed",
         help="Upload candidate resumes in PDF or DOCX format",
-        key=f"file_uploader_{uploader_key}"
     )
 
     if uploaded:
         st.markdown(
-            f'<div style="margin-top:0.5rem;font-size:0.875rem;color:#5A7FA8;">✓ {len(uploaded)} file(s) ready</div>',
+            f'<div style="margin-top:1rem;font-size:0.875rem;color:#5A7FA8;">✓ {len(uploaded)} file(s) ready</div>',
             unsafe_allow_html=True,
         )
         for f in uploaded:
@@ -89,38 +89,44 @@ def render_file_upload_section(uploader_key) -> list:
                 unsafe_allow_html=True,
             )
 
+    st.markdown('</div>', unsafe_allow_html=True)
     return uploaded
 
 
 def render_job_details_section() -> tuple[str, str]:
     """Render the job title and description inputs. Returns (role, jd_text)."""
+    st.markdown('<div class="input-section">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">💼 Job Details</div>', unsafe_allow_html=True)
 
     role = st.text_input(
-        "job_title",
+        "Job Title",
         placeholder="e.g., Senior Data Engineer",
         label_visibility="collapsed",
         key="job_title_input",
     )
 
+    st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
+
     jd_text = st.text_area(
-        "job_description",
+        "Job Description",
         height=200,
         placeholder="Paste the complete job description including required skills, experience, and responsibilities...",
         label_visibility="collapsed",
         key="job_desc_input",
     )
 
+    st.markdown('</div>', unsafe_allow_html=True)
     return role, jd_text
 
 
 def render_action_button(uploaded, role: str, jd_text: str) -> bool:
     """Render the analyze button and readiness status. Returns True when clicked."""
+    st.markdown('<div style="height:1rem;"></div>', unsafe_allow_html=True)
     ready = bool(uploaded and role.strip() and jd_text.strip())
 
     col_btn, col_status = st.columns([1, 2])
     with col_btn:
-        run = st.button("🚀 Analyze Candidates", type="primary", disabled=not ready, width='stretch')
+        run = st.button("🚀 Analyze Candidates", type="primary", disabled=not ready, use_container_width=True)
     with col_status:
         if not uploaded:
             st.caption("⚠️ Please upload at least one resume")
@@ -150,26 +156,27 @@ def render_stats_bar(results: list) -> None:
 
 def render_results_table(results: list) -> None:
     """Render the ranked candidates dataframe with interactive toolbar."""
-    import html as html_lib
     df = pd.DataFrame([{
         "Rank": r.rank,
         "Candidate Name": r.candidate_name,
         "Score": r.score,
         "Experience (yrs)": r.experience_years,
-        "Skills Missing": html_lib.unescape(r.skills_missing or ""),
-        "Key Strengths": html_lib.unescape(r.key_strengths or ""),
-        "Assessment": html_lib.unescape(r.reason or ""),
+        "Skills Matched": r.skills_matched,
+        "Skills Missing": r.skills_missing,
+        "Key Strengths": r.key_strengths,
+        "Assessment": r.reason,
     } for r in results])
 
     st.dataframe(
         df,
-        width='stretch',
+        use_container_width=True,
         hide_index=True,
         column_config={
             "Rank": st.column_config.NumberColumn("Rank", width="small"),
             "Candidate Name": st.column_config.TextColumn("Candidate Name", width="medium"),
             "Score": st.column_config.NumberColumn("Score", width="small"),
             "Experience (yrs)": st.column_config.NumberColumn("Experience", width="small"),
+            "Skills Matched": st.column_config.NumberColumn("Skills ✓", width="small"),
             "Skills Missing": st.column_config.TextColumn("Missing Skills", width="medium"),
             "Key Strengths": st.column_config.TextColumn("Key Strengths", width="large"),
             "Assessment": st.column_config.TextColumn("Assessment", width="large"),
@@ -185,6 +192,7 @@ def render_export_section(results: list, role: str) -> None:
         "Candidate Name": r.candidate_name,
         "Score": r.score,
         "Experience (yrs)": r.experience_years,
+        "Skills Matched": r.skills_matched,
         "Skills Missing": r.skills_missing,
         "Key Strengths": r.key_strengths,
         "Assessment": r.reason,
@@ -201,7 +209,7 @@ def render_export_section(results: list, role: str) -> None:
             data=csv_buffer.getvalue(),
             file_name=f"cv_ranking_{role.replace(' ', '_').lower()}.csv",
             mime="text/csv",
-            width='stretch',
+            use_container_width=True,
         )
     with col_caption:
         st.caption(f"📊 Results for: **{role}** | {len(results)} candidates shown")
@@ -212,12 +220,16 @@ def render_history_section(history: list) -> tuple:
     if not history:
         return None, None
 
+    st.markdown('<div style="height:2rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="input-section">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📜 Analysis History</div>', unsafe_allow_html=True)
 
     for i, entry in enumerate(reversed(history)):
         with st.expander(f"🕒 {entry['timestamp']} — {entry['role']} ({entry['candidates']} candidates)"):
             st.caption(f"Top candidate: **{entry['top_candidate']}** (Score: {entry['top_score']})")
             if st.button("👁️ View Results", key=f"history_view_{i}"):
+                st.markdown('</div>', unsafe_allow_html=True)
                 return i, entry
 
+    st.markdown('</div>', unsafe_allow_html=True)
     return None, None

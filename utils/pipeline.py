@@ -27,7 +27,7 @@ from validator import validate_results
 
 logger = logging.getLogger(__name__)
 
-RANKING_PROMPT = """You are a strict and precise technical recruiter. Your job is to score and rank candidates against a job description with accuracy and consistency.
+RANKING_PROMPT = """You are a strict technical recruiter evaluating candidates for a specific role. Follow every instruction precisely.
 
 JOB DESCRIPTION:
 {{$job_description}}
@@ -35,31 +35,56 @@ JOB DESCRIPTION:
 CANDIDATE PROFILES:
 {{$retrieved_cvs}}
 
-SCORING RULES — follow these exactly, no exceptions:
+--- SCORING INSTRUCTIONS ---
 
-STEP 1 — IDENTIFY REQUIRED SKILLS
-List every required skill, tool, and experience from the JD. Count the total. This is your baseline.
+STEP 1 — EXTRACT JD REQUIREMENTS WITH WEIGHTS
+From the JD, classify every requirement into:
+  CRITICAL (weight 3): Core domain skills explicitly required — e.g. pump hydraulics, CFD simulations, turbomachinery design
+  IMPORTANT (weight 2): Supporting technical skills — e.g. specific tools (ANSYS CFX, OpenFOAM), domain specialization
+  BONUS (weight 1): Nice-to-have — soft skills, additional tools, certifications not listed as mandatory
 
-STEP 2 — SCORE EACH CANDIDATE (0–100 integer)
-   - 90-100: Exceeds ALL requirements, has bonus skills
-   - 75-89: Meets ALL required skills, meets experience requirement
-   - 60-74: Meets MOST required skills (80%+)
-   - 40-59: Meets SOME required skills (50-79%)
-   - 0-39: Missing critical skills (<50%)
+STEP 2 — EVALUATE EACH CANDIDATE (evidence-based, not keyword-based)
+For each candidate, look for EVIDENCE in their actual work experience and projects:
+  - Infer from context: "designed impeller geometry and volute" = pump hydraulics evidence
+  - Infer from context: "ran ANSYS CFX simulations for rotating equipment" = CFD + turbomachinery evidence
+  - Infer from context: "optimized turbine runner using CFD" = turbomachinery + CFD evidence
+  - Do NOT require exact keyword match. Understand domain equivalence.
+  - A candidate who did CFD on BESS cooling systems does NOT have turbomachinery CFD experience.
+  - A candidate who designed centrifugal pumps DOES have pump hydraulics experience.
 
-STEP 3 — RANK
-Rank strictly by score descending. If two candidates have the same score, rank the one with more relevant experience higher.
+STEP 3 — APPLY EXPERIENCE GATE (MANDATORY)
+  - Extract minimum experience requirement from JD (e.g. "5+ years", "minimum 5 years").
+  - If a candidate's PRE_EXTRACTED_EXPERIENCE is below the minimum: their score CANNOT exceed 65.
+  - If no minimum is stated in JD, skip this gate.
+  - This gate overrides all other scoring — do not bypass it.
 
-STEP 4 — EXPERIENCE
-Always use PRE_EXTRACTED_EXPERIENCE from the candidate profile if present — do not override it.
-If not present, calculate from date ranges in the CV text.
+STEP 4 — CALCULATE SCORE (0-100)
+  Start at 0. Add points based on evidence:
+  - Each CRITICAL skill with clear evidence in work experience: +15 points
+  - Each IMPORTANT skill with evidence: +8 points
+  - Each BONUS skill with evidence: +3 points
+  - Experience meets JD minimum: +10 points
+  - Experience exceeds JD minimum by 3+ years: +5 additional points
+  Cap total at 100. Apply experience gate from STEP 3.
 
-STEP 5 — CANDIDATE NAME
-Copy exactly from VERIFIED_NAME tag. Do not modify, shorten, or add titles.
+  Reference bands:
+  90-100: All critical + most important skills evidenced, experience exceeds requirement
+  75-89: All critical skills evidenced, most important, meets experience requirement
+  60-74: Most critical skills evidenced, some important, may be under-experienced
+  40-59: Some critical skills evidenced, notable gaps
+  0-39: Missing most critical skills
 
-STEP 6 — REASON
-Write exactly 2–3 sentences: (1) what skills matched, (2) what is missing, (3) experience fit.
-Be specific — name actual skills and tools, not vague statements like "good fit".
+STEP 5 — RANK
+  Sort strictly by score descending. Ties broken by experience (higher wins).
+
+STEP 6 — CANDIDATE NAME
+  Copy exactly from VERIFIED_NAME tag. Do not modify, shorten, or add titles.
+
+STEP 7 — REASON
+  Write exactly 3 sentences:
+  1. Which CRITICAL skills were evidenced and from which specific role/project in their CV
+  2. What critical or important skills are missing or insufficiently evidenced
+  3. Experience fit: state their years vs JD requirement and whether the gate was applied
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON array. No markdown, no explanation, no code fences.
@@ -70,9 +95,9 @@ Each object must have these exact fields:
   score (integer 0-100),
   reason (string),
   experience_years (float, from PRE_EXTRACTED_EXPERIENCE if available),
-  key_strengths (string, comma-separated list of matched skills),
-  skills_matched (integer),
-  skills_missing (string, comma-separated list of missing skills)
+  key_strengths (string, comma-separated matched skills with evidence source),
+  skills_matched (integer, count of critical + important skills evidenced),
+  skills_missing (string, comma-separated missing critical and important skills)
 """
 
 
@@ -133,18 +158,14 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
             skipped.append((fname, reason))
             continue
         full_text = "\n\n---\n\n".join(_chunk_text(text))
-        # Use filename as candidate name - simple and reliable
         stem = Path(fname).stem
         stem = re.sub(r'^(Naukri|LinkedIn|Indeed|Resume|CV)[_\-\s]+', '', stem, flags=re.IGNORECASE)
-        stem = re.sub(r'[_\-\s]*\d+[Yy][_\-\s]*\d*[Mm]?\s*$', '', stem)  # strip "6y_4m", "3Y 0M"
-        stem = re.sub(r'[_\-\s]*\d+$', '', stem)  # strip trailing numbers
+        stem = re.sub(r'[_\-\s]*\d+[Yy][_\-\s]*\d*[Mm]?\s*$', '', stem)
+        stem = re.sub(r'[_\-\s]*\d+$', '', stem)
         name = stem.replace('_', ' ').replace('-', ' ').strip().title()
-        # Strip job title suffixes — match partial words too (e.g. "Transitin", "Prog")
         name = re.sub(r'\s+(?:Senior|Junior|Lead|Head|Director|Manager|Analyst|Engineer|Developer|Consultant|Coordinator|Specialist|Associate|Intern|Officer|Transition|Transit|Program|Prog|PMO)\w*.*$', '', name, flags=re.IGNORECASE).strip()
         exp_years = extract_experience_years(text)
-        # Use deterministic ID based on filename for consistency across runs
         cv_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, fname))
-        # Embed metadata directly into raw_text so it's always present in retrieved output
         annotations = f"CV_ID: {cv_id} | VERIFIED_NAME: {name}"
         if exp_years is not None:
             annotations += f" | PRE_EXTRACTED_EXPERIENCE: {exp_years} years"
@@ -155,12 +176,11 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
             raw_text=full_text,
             experience_years=exp_years
         ))
-    # Deduplicate CVs by candidate name (keep first occurrence)
+    # Deduplicate by normalized name
     seen_names: set = set()
     unique_cvs = []
     for cv in cvs:
-        # Normalize name: remove job titles and extra whitespace for comparison
-        normalized = re.sub(r'\s+(Transition|Senior|Junior|Lead|Manager|Analyst|Engineer|Developer|Consultant|Coordinator|Specialist|Associate).*$', '', cv.candidate_name, flags=re.IGNORECASE).strip().lower()
+        normalized = re.sub(r'\s+(Transition|Senior|Junior|Lead|Manager|Analyst|Engineer|Developer|Consultant|Coordinator|Specialist|Associate)\w*.*$', '', cv.candidate_name, flags=re.IGNORECASE).strip().lower()
         if normalized not in seen_names:
             seen_names.add(normalized)
             unique_cvs.append(cv)
@@ -178,7 +198,6 @@ async def _invoke_with_retry(kernel, fn, retries=5, delay=15, **kwargs):
         try:
             return await kernel.invoke(fn, **kwargs)
         except (KernelInvokeException, FunctionExecutionException, Exception) as e:
-            # Walk full exception cause chain to find transient signal
             cause = e
             msg_parts = []
             while cause:
@@ -235,7 +254,6 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
             ranking_json = ranking_json[4:]
         ranking_json = ranking_json.strip()
 
-    # Unescape HTML entities the LLM may have introduced
     import html as html_lib
     ranking_json = html_lib.unescape(ranking_json)
 
@@ -246,17 +264,15 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
     for item in items:
         try:
             result = RankedResult(**item)
-            # Use cv_id for authoritative name — most reliable
             if result.cv_id and result.cv_id in cv_id_map:
                 result = result.model_copy(update={"candidate_name": cv_id_map[result.cv_id].candidate_name})
             else:
-                # Fallback: fuzzy match by lowercased name
                 matched = verified_names.get(result.candidate_name.lower())
                 if matched:
                     result = result.model_copy(update={"candidate_name": matched})
             results.append(result)
         except Exception as e:
             logger.warning(f"Failed to parse result item: {e}")
-    
+
     status_placeholder.empty()
     return validate_results(results)

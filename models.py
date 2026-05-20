@@ -9,6 +9,7 @@ class CV(BaseModel):
     candidate_name: str = Field(..., description="Full name of the candidate")
     raw_text: str = Field(..., description="Full text content of the CV")
     embedding: Optional[List[float]] = Field(default=None)
+    experience_years: Optional[float] = Field(default=None)
 
 
 class JobDescription(BaseModel):
@@ -19,6 +20,7 @@ class JobDescription(BaseModel):
 
 class RankedResult(BaseModel):
     rank: int = Field(..., description="Ranking position (1-based)")
+    cv_id: str = Field(default="", description="CV unique identifier")
     candidate_name: str = Field(..., description="Name of the candidate")
     score: int = Field(..., ge=0, le=100, description="Ranking score 0-100")
     reason: str = Field(..., description="Explanation for the ranking")

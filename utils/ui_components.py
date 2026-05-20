@@ -64,9 +64,8 @@ def render_header() -> None:
     st.markdown(_render_template("header.html", logo=logo_html), unsafe_allow_html=True)
 
 
-def render_file_upload_section(uploaded_files) -> list:
+def render_file_upload_section(uploader_key) -> list:
     """Render the resume upload section and return uploaded files."""
-    st.markdown('<div class="input-section">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📁 Upload Resumes</div>', unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
@@ -75,6 +74,7 @@ def render_file_upload_section(uploaded_files) -> list:
         accept_multiple_files=True,
         label_visibility="collapsed",
         help="Upload candidate resumes in PDF or DOCX format",
+        key=f"file_uploader_{uploader_key}"
     )
 
     if uploaded:
@@ -89,13 +89,11 @@ def render_file_upload_section(uploaded_files) -> list:
                 unsafe_allow_html=True,
             )
 
-    st.markdown('</div>', unsafe_allow_html=True)
     return uploaded
 
 
 def render_job_details_section() -> tuple[str, str]:
     """Render the job title and description inputs. Returns (role, jd_text)."""
-    st.markdown('<div class="input-section">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">💼 Job Details</div>', unsafe_allow_html=True)
 
     role = st.text_input(
@@ -105,8 +103,6 @@ def render_job_details_section() -> tuple[str, str]:
         key="job_title_input",
     )
 
-    st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
-
     jd_text = st.text_area(
         "Job Description",
         height=200,
@@ -115,18 +111,16 @@ def render_job_details_section() -> tuple[str, str]:
         key="job_desc_input",
     )
 
-    st.markdown('</div>', unsafe_allow_html=True)
     return role, jd_text
 
 
 def render_action_button(uploaded, role: str, jd_text: str) -> bool:
     """Render the analyze button and readiness status. Returns True when clicked."""
-    st.markdown('<div style="height:1rem;"></div>', unsafe_allow_html=True)
     ready = bool(uploaded and role.strip() and jd_text.strip())
 
     col_btn, col_status = st.columns([1, 2])
     with col_btn:
-        run = st.button("🚀 Analyze Candidates", type="primary", disabled=not ready, use_container_width=True)
+        run = st.button("🚀 Analyze Candidates", type="primary", disabled=not ready, width='stretch')
     with col_status:
         if not uploaded:
             st.caption("⚠️ Please upload at least one resume")
@@ -140,6 +134,8 @@ def render_action_button(uploaded, role: str, jd_text: str) -> bool:
 
 def render_stats_bar(results: list) -> None:
     """Render the summary statistics bar above the results table."""
+    if not results:
+        return
     avg_score = round(sum(r.score for r in results) / len(results))
     strong_matches = sum(1 for r in results if r.score >= 75)
     st.markdown(
@@ -169,7 +165,7 @@ def render_results_table(results: list) -> None:
 
     st.dataframe(
         df,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         column_config={
             "Rank": st.column_config.NumberColumn("Rank", width="small"),
@@ -209,7 +205,7 @@ def render_export_section(results: list, role: str) -> None:
             data=csv_buffer.getvalue(),
             file_name=f"cv_ranking_{role.replace(' ', '_').lower()}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width='stretch',
         )
     with col_caption:
         st.caption(f"📊 Results for: **{role}** | {len(results)} candidates shown")
@@ -220,16 +216,12 @@ def render_history_section(history: list) -> tuple:
     if not history:
         return None, None
 
-    st.markdown('<div style="height:2rem;"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="input-section">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📜 Analysis History</div>', unsafe_allow_html=True)
 
     for i, entry in enumerate(reversed(history)):
         with st.expander(f"🕒 {entry['timestamp']} — {entry['role']} ({entry['candidates']} candidates)"):
             st.caption(f"Top candidate: **{entry['top_candidate']}** (Score: {entry['top_score']})")
             if st.button("👁️ View Results", key=f"history_view_{i}"):
-                st.markdown('</div>', unsafe_allow_html=True)
                 return i, entry
 
-    st.markdown('</div>', unsafe_allow_html=True)
     return None, None

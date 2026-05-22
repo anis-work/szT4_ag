@@ -5,12 +5,12 @@ import json
 import html as html_lib
 import tempfile
 import os
+import time
 import uuid
 import logging
 import re
 from pathlib import Path
 
-import numpy as np
 import streamlit as st
 from werkzeug.utils import secure_filename
 
@@ -21,7 +21,7 @@ from semantic_kernel.functions import KernelFunctionFromPrompt
 
 from config import GOOGLE_API_KEY, GEMINI_MODEL
 from models import CV, JobDescription, RankedResult
-from embedder import embed_text, embed_query
+from embedder import embed_text
 from vector_store import VectorStore
 from plugins.cv_retrieval_plugin import CVRetrievalPlugin
 from pdf_loader import _extract_text, _chunk_text, extract_experience_years
@@ -29,88 +29,160 @@ from validator import validate_results
 
 logger = logging.getLogger(__name__)
 
+RANKING_PROMPT = """You are a principal-level technical recruiter with deep domain knowledge across industries. \
+Your judgment must go far beyond keyword matching — you are evaluating genuine fit, \
+transferable expertise, and real evidence of skill from each candidate's work history.
 
-# ── JD Parsing Prompt ─────────────────────────────────────────────────────────
-
-JD_PARSE_PROMPT = """You are a job description analyst. Parse the job description below and extract requirements into three tiers.
-
-JOB DESCRIPTION:
+═══════════════════════════════════════════════════════
+ROLE & JOB DESCRIPTION
+═══════════════════════════════════════════════════════
 {{$job_description}}
 
-Rules:
-- CORE: Must-have skills/experience explicitly required. Missing these = candidate is unqualified.
-- IMPORTANT: Strong preferences, tools, domain knowledge. Missing these = significant gap.
-- OPTIONAL: Nice-to-have, soft skills, travel, environment exposure. Missing these = minor gap.
-- min_experience: Extract minimum years required as integer. If not stated, return 0.
-
-Return ONLY valid JSON, no markdown, no explanation:
-{
-  "core": ["skill1", "skill2"],
-  "important": ["skill3", "skill4"],
-  "optional": ["skill5", "skill6"],
-  "min_experience": 0
-}"""
-
-
-# ── Reasoning Prompt ──────────────────────────────────────────────────────────
-
-REASONING_PROMPT = """You are a technical recruiter providing written justification for pre-computed candidate scores.
-
-JOB DESCRIPTION:
-{{$job_description}}
-
-CANDIDATE PROFILES WITH PRE-COMPUTED SCORES:
+═══════════════════════════════════════════════════════
+CANDIDATE PROFILES
+═══════════════════════════════════════════════════════
 {{$retrieved_cvs}}
 
-For each candidate, write a justification for their score. Do NOT change the score — it is already computed.
+═══════════════════════════════════════════════════════
+EVALUATION INSTRUCTIONS — follow every step in order
+═══════════════════════════════════════════════════════
 
-For each candidate write exactly 3 sentences:
-1. Which core skills were evidenced and from which specific role/project
-2. What is missing or weak
-3. Experience fit relative to JD requirement
+─── STEP 1 · PARSE THE JD INTO A WEIGHTED REQUIREMENT SET ───────────────────
+Classify every distinct requirement from the JD into one of three tiers:
 
-Also extract:
-- key_strengths: comma-separated list of matched skills with evidence
-- skills_missing: comma-separated list of missing core/important skills
-- skills_matched: count of core + important skills evidenced
+  CRITICAL [C] — The role cannot function without this. Missing it is a
+                   dealbreaker unless a strong semantic equivalent exists.
+                   Identify these from words like "required", "must have",
+                   "essential", or from the core function of the role itself.
 
-Return ONLY a valid JSON array. No markdown, no explanation, no code fences.
-Each object must have:
-  cv_id (string, copy exactly from CV_ID tag),
-  candidate_name (string, copy exactly from VERIFIED_NAME tag),
-  reason (string, exactly 3 sentences),
-  key_strengths (string),
-  skills_matched (integer),
-  skills_missing (string)
-"""
+  IMPORTANT [I] — Strongly preferred. Absence hurts the score significantly
+                   but does not eliminate the candidate.
+                   Identify these from words like "preferred", "strong plus",
+                   "ideally", or from tools/methods central to day-to-day work.
+
+  BONUS [B] — Nice-to-have. Adds value but is not expected.
+                   Identify these from words like "familiarity", "exposure",
+                   "beneficial", or additional certifications not listed as mandatory.
+
+─── STEP 2 · EVALUATE EACH CANDIDATE — SEMANTIC, NOT LEXICAL ────────────────
+For every requirement identified in Step 1, search the candidate's profile for
+EVIDENCE. Apply the following semantic reasoning rules:
+
+  FULL CREDIT — Exact skill OR a well-established equivalent demonstrated in
+  real work experience or a shipped project. Examples of semantic equivalence:
+    • "PostgreSQL" or "MySQL" or "Oracle" → satisfies "relational database"
+    • "AWS" or "GCP" or "Azure" → satisfies "cloud platform"
+    • "Pandas" or "Polars" or "dplyr" → satisfies "data manipulation"
+    • "led a 6-person cross-functional team" → satisfies "team leadership"
+    • "reduced customer churn by 18% via segmentation model" → satisfies "data-driven decision making"
+    • "ANSYS CFX" or "OpenFOAM" or "Fluent" → satisfies "CFD simulation tool"
+    • "centrifugal pump impeller design" → satisfies "pump hydraulics design"
+
+  PARTIAL CREDIT (50–75 %) — Adjacent skill with clear, plausible transferability.
+    • Experience in a closely related tool, method, or domain where the core
+      competency transfers with modest upskilling.
+
+  NO CREDIT — Fundamentally different domain despite surface similarity.
+    • The skill appears on the CV but context shows it is unrelated to the requirement.
+    • Vague self-assessments with no supporting evidence:
+      "familiar with", "exposure to", "basic knowledge of" — no project cited.
+
+  IMPLICIT CREDIT — Skills logically implied by demonstrated adjacent work.
+  Do not penalise a candidate for not listing skills a competent practitioner
+  would obviously possess.
+
+─── STEP 3 · EXPERIENCE GATE (NON-NEGOTIABLE) ───────────────────────────────
+  a. Extract the minimum years of experience stated in the JD (e.g. "5+ years",
+     "minimum 3 years"). If none is stated, skip this gate entirely.
+  b. Use PRE_EXTRACTED_EXPERIENCE from the candidate's tag if available.
+  c. If the candidate's experience is below the JD minimum:
+       → Their final score is capped at 60. No exceptions.
+  d. This cap is applied AFTER the raw score is calculated — not instead of it.
+     A well-qualified but under-experienced candidate still outranks a poorly-
+     qualified under-experienced one within the cap.
+
+─── STEP 4 · CALCULATE RAW SCORE (0–100) ────────────────────────────────────
+Start at 0. Add points strictly on the basis of EVIDENCE found in Step 2.
+
+  Per CRITICAL skill with FULL evidence in work history:   +15 pts
+  Per CRITICAL skill with PARTIAL evidence:                +8 pts
+  Per CRITICAL skill with NO evidence:                     +0 pts
+  Per IMPORTANT skill with FULL evidence:                  +8 pts
+  Per IMPORTANT skill with PARTIAL evidence:               +4 pts
+  Per BONUS skill with evidence:                           +3 pts
+  Experience meets JD minimum:                             +10 pts
+  Experience exceeds JD minimum by 3+ years:               +5 pts
+  Outstanding achievement relevant to the role
+    (quantified business impact, publication, award,
+     patent, top ranking):                                 +5 pts (max once)
+
+  Hard cap: 100. Apply the experience gate from Step 3 last.
+
+  Score bands for reference:
+    90–100  All critical skills evidenced, exceeds experience requirement
+    75–89   All critical skills evidenced, meets experience requirement
+    60–74   Most critical skills evidenced, minor gaps or at experience floor
+    40–59   Some critical skills evidenced, notable gaps
+    0–39    Missing most critical skills
+
+─── STEP 5 · RANK ───────────────────────────────────────────────────────────
+  Sort all candidates by final score descending.
+  Tiebreaker: higher experience_years wins.
+  Assign rank 1 to the best candidate.
+
+─── STEP 6 · WRITE THE REASON ───────────────────────────────────────────────
+Exactly 3 sentences per candidate — no more, no fewer:
+  Sentence 1: Which CRITICAL skills were evidenced and from which specific
+              role, project, or achievement in their CV (cite it by name).
+  Sentence 2: Which critical or important skills are absent or only partially
+              evidenced, and why that matters for this role.
+  Sentence 3: Experience verdict — state their extracted years vs the JD
+              requirement and explicitly note if the gate was applied.
+
+─── STEP 7 · VALIDATE BEFORE OUTPUTTING ─────────────────────────────────────
+  • Every cv_id must be copied verbatim from the CV_ID tag in the profile.
+  • Every candidate_name must be copied verbatim from the VERIFIED_NAME tag.
+  • Scores must be integers in [0, 100].
+  • ranks must be unique positive integers starting at 1.
+  • skills_matched must equal the integer count of C+I skills with full evidence.
+  • skills_missing must list every C and I skill with no or partial evidence.
+
+═══════════════════════════════════════════════════════
+OUTPUT — STRICT FORMAT
+═══════════════════════════════════════════════════════
+Return ONLY a valid JSON array. Absolutely no markdown, no code fences, \
+no prose before or after. Any deviation will break the parser.
+
+Schema (each element):
+{
+  "rank": <integer, 1 = best>,
+  "cv_id": <string, verbatim from CV_ID tag>,
+  "candidate_name": <string, verbatim from VERIFIED_NAME tag>,
+  "score": <integer, 0-100>,
+  "reason": <string, exactly 3 sentences>,
+  "experience_years": <float, from PRE_EXTRACTED_EXPERIENCE or your best estimate>,
+  "key_strengths": <string, comma-separated matched skills with evidence source>,
+  "skills_matched": <integer, count of C+I skills with full evidence>,
+  "skills_missing": <string, comma-separated missing or partial C+I skills>
+}"""
 
 
 @st.cache_resource
 def get_kernel() -> Kernel:
-    """Initialize and return a Semantic Kernel instance."""
+    """Initialize and return a Semantic Kernel instance with ranking function."""
     kernel = Kernel()
     kernel.add_service(GoogleAIChatCompletion(gemini_model_id=GEMINI_MODEL, api_key=GOOGLE_API_KEY))
-
-    kernel.add_function(plugin_name="jd_parser", function=KernelFunctionFromPrompt(
-        function_name="parse_jd",
-        plugin_name="jd_parser",
-        prompt=JD_PARSE_PROMPT,
+    kernel.add_function(plugin_name="ranking", function=KernelFunctionFromPrompt(
+        function_name="rank_candidates",
+        plugin_name="ranking",
+        prompt=RANKING_PROMPT,
         prompt_execution_settings=GoogleAIPromptExecutionSettings(temperature=0.0, seed=42),
     ))
-
-    kernel.add_function(plugin_name="reasoning", function=KernelFunctionFromPrompt(
-        function_name="reason_candidates",
-        plugin_name="reasoning",
-        prompt=REASONING_PROMPT,
-        prompt_execution_settings=GoogleAIPromptExecutionSettings(temperature=0.0, seed=42),
-    ))
-
     return kernel
 
 
-# ── Phase 1: Python Pre-Scoring ───────────────────────────────────────────────
-
 def _safe_experience(text: str) -> float:
+    """Wrapper around extract_experience_years with fallback for edge cases."""
     exp = extract_experience_years(text)
     if exp is None or exp <= 0 or exp > 40:
         m = re.search(r'\b(\d{1,2})\+?\s*years?\b', text.lower())
@@ -121,60 +193,6 @@ def _safe_experience(text: str) -> float:
             return round(float(m2.group(1)) + float(m2.group(2)) / 12, 1)
         return 0.0
     return round(exp, 1)
-
-
-def _cosine_similarity(a: list, b: list) -> float:
-    va, vb = np.array(a), np.array(b)
-    denom = np.linalg.norm(va) * np.linalg.norm(vb)
-    return float(np.dot(va, vb) / denom) if denom > 0 else 0.0
-
-
-def _skill_present(skill_emb, cv_chunk_embs, threshold=0.72) -> bool:
-    if not cv_chunk_embs:
-        return False
-    return max(_cosine_similarity(skill_emb, c) for c in cv_chunk_embs) >= threshold
-
-
-def _compute_pre_score(
-    cv: CV,
-    core_embeddings: list,
-    important_embeddings: list,
-    optional_embeddings: list,
-    min_experience: int,
-    cv_chunk_embs: list,
-) -> dict:
-    if not cv_chunk_embs:
-        return {"pre_score": 0, "core_matched": 0, "important_matched": 0}
-
-    core_matched = sum(1 for emb in core_embeddings if _skill_present(emb, cv_chunk_embs))
-    important_matched = sum(1 for emb in important_embeddings if _skill_present(emb, cv_chunk_embs))
-    optional_matched = sum(1 for emb in optional_embeddings if _skill_present(emb, cv_chunk_embs))
-
-    score = (core_matched * 30) + (important_matched * 12) + (optional_matched * 1)
-
-    missing_core = len(core_embeddings) - core_matched
-    if missing_core > 1:
-        score -= 40
-
-    exp = cv.experience_years or 0.0
-    if min_experience > 0:
-        if exp >= min_experience:
-            score += 15
-            if exp >= min_experience + 3:
-                score += 5
-        else:
-            score = min(score, 55)
-    else:
-        if exp >= 5:
-            score += 15
-        elif exp >= 2:
-            score += 8
-
-    return {
-        "pre_score": max(0, min(round(score), 100)),
-        "core_matched": core_matched,
-        "important_matched": important_matched,
-    }
 
 
 def save_uploads(uploaded_files) -> tuple:
@@ -259,25 +277,6 @@ def build_cvs(tmp_dir: str, filenames: list) -> tuple:
     return unique_cvs, skipped
 
 
-async def _parse_jd(kernel: Kernel, jd_text: str) -> dict:
-    """Use LLM to parse JD into tiered requirements."""
-    parse_fn = kernel.get_function(plugin_name="jd_parser", function_name="parse_jd")
-    result = await kernel.invoke(parse_fn, job_description=jd_text)
-    raw = html_lib.unescape(str(result).strip())
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    parsed = json.loads(raw)
-    return {
-        "core": parsed.get("core", []),
-        "important": parsed.get("important", []),
-        "optional": parsed.get("optional", []),
-        "min_experience": int(parsed.get("min_experience", 0)),
-    }
-
-
 async def _invoke_with_retry(kernel, fn, retries=5, delay=15, **kwargs):
     """Invoke kernel function with retry logic for transient errors."""
     from semantic_kernel.exceptions.kernel_exceptions import KernelInvokeException
@@ -309,69 +308,19 @@ async def _invoke_with_retry(kernel, fn, retries=5, delay=15, **kwargs):
 
 
 async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_placeholder) -> list:
-    """
-    Two-phase CV ranking pipeline:
-    Phase 1 — Python pre-scores candidates deterministically using embeddings + weighted skill matching
-    Phase 2 — LLM provides reasoning/justification only (does not change scores)
-    """
-
-    # ── Step 1: Embed resumes ─────────────────────────────────────────────────
-    status_placeholder.info("📄 Step 1/4: Embedding resumes...")
+    """Run the complete CV ranking pipeline."""
+    # Step 1: Embed resumes
+    status_placeholder.info("📄 Step 1/3: Extracting and embedding resumes...")
     bar = st.progress(0)
     for i, cv in enumerate(cvs):
         cv.embedding = embed_text(cv.raw_text)
         bar.progress((i + 1) / len(cvs))
+        if i < len(cvs) - 1:
+            time.sleep(1)  # avoid burst rate limiting on free tier
     bar.empty()
 
-    # ── Step 2: Parse JD into tiered requirements ─────────────────────────────
-    status_placeholder.info("🔍 Step 2/4: Parsing job description requirements...")
-    try:
-        jd_tiers = await _parse_jd(kernel, jd.requirements)
-        logger.info(f"JD parsed — Core: {jd_tiers['core']}, Important: {jd_tiers['important']}, "
-                    f"Optional: {jd_tiers['optional']}, Min exp: {jd_tiers['min_experience']}")
-    except Exception as e:
-        logger.warning(f"JD parsing failed, falling back to single-tier: {e}")
-        jd_tiers = {"core": [], "important": [], "optional": [], "min_experience": 0}
-
-    # Embed each skill tier for similarity matching
-    core_embeddings = [embed_query(s) for s in jd_tiers["core"]] if jd_tiers["core"] else []
-    important_embeddings = [embed_query(s) for s in jd_tiers["important"]] if jd_tiers["important"] else []
-    optional_embeddings = [embed_query(s) for s in jd_tiers["optional"]] if jd_tiers["optional"] else []
-
-    # ── Step 3: Python pre-scoring ────────────────────────────────────────────
-    status_placeholder.info("⚖️ Step 3/4: Computing weighted scores...")
-    pre_scores = {}
-    for cv in cvs:
-        chunks = [c.strip() for c in cv.raw_text.split("\n\n---\n\n") if c.strip()]
-        if not chunks:
-            chunks = [cv.raw_text]
-        # Store chunk embeddings on CV to avoid re-embedding later
-        if not cv.chunk_embeddings:
-            cv.chunk_embeddings = [embed_text(chunk) for chunk in chunks[:15]]
-
-        pre_scores[cv.id] = _compute_pre_score(
-            cv,
-            core_embeddings,
-            important_embeddings,
-            optional_embeddings,
-            jd_tiers["min_experience"],
-            cv.chunk_embeddings,
-        )
-        logger.info(f"{cv.candidate_name}: pre_score={pre_scores[cv.id]['pre_score']}, "
-                    f"core_matched={pre_scores[cv.id]['core_matched']}")
-
-    # Sort by score desc, break ties by domain strength (core + important matched)
-    cvs_sorted = sorted(
-        cvs,
-        key=lambda c: (
-            pre_scores[c.id]["core_matched"] >= 1,
-            pre_scores[c.id]["pre_score"],
-            pre_scores[c.id]["core_matched"] + pre_scores[c.id]["important_matched"]
-        ),
-        reverse=True
-    )
-
-    # Build retrieved_cvs string with pre-scores injected
+    # Step 2: Retrieve relevant candidates
+    status_placeholder.info("🔍 Step 2/3: Retrieving relevant candidates...")
     vs = VectorStore()
     for cv in cvs:
         vs.add(cv)
@@ -380,61 +329,39 @@ async def run_pipeline(kernel: Kernel, cvs: list, jd: JobDescription, status_pla
     retrieve_fn = kernel.get_function(plugin_name="retrieval", function_name="retrieve")
     retrieved = await _invoke_with_retry(kernel, retrieve_fn, query=jd.requirements, top_k=len(cvs))
     retrieved_str = str(retrieved).strip()
-
-    # Inject pre-scores into the retrieved text so LLM sees them
-    for cv in cvs_sorted:
-        ps = pre_scores[cv.id]["pre_score"]
-        old = f"VERIFIED_NAME: {cv.candidate_name}"
-        new = f"VERIFIED_NAME: {cv.candidate_name} | PRE_COMPUTED_SCORE: {ps}"
-        retrieved_str = retrieved_str.replace(old, new, 1)
-
     cv_id_map = {cv.id: cv for cv in cvs}
 
-    # ── Step 4: LLM reasoning only ────────────────────────────────────────────
-    status_placeholder.info("🤖 Step 4/4: Generating candidate assessments...")
-    reason_fn = kernel.get_function(plugin_name="reasoning", function_name="reason_candidates")
-    result = await _invoke_with_retry(
-        kernel, reason_fn,
-        job_description=jd.requirements,
-        retrieved_cvs=retrieved_str
-    )
+    # Step 3: Rank candidates
+    status_placeholder.info("🤖 Step 3/3: AI ranking candidates...")
+    rank_fn = kernel.get_function(plugin_name="ranking", function_name="rank_candidates")
+    result = await _invoke_with_retry(kernel, rank_fn,
+                                      job_description=jd.requirements,
+                                      retrieved_cvs=retrieved_str)
+    ranking_json = str(result).strip()
+    if ranking_json.startswith("```"):
+        ranking_json = ranking_json.split("```")[1]
+        if ranking_json.startswith("json"):
+            ranking_json = ranking_json[4:]
+        ranking_json = ranking_json.strip()
 
-    reasoning_json = html_lib.unescape(str(result).strip())
-    if reasoning_json.startswith("```"):
-        reasoning_json = reasoning_json.split("```")[1]
-        if reasoning_json.startswith("json"):
-            reasoning_json = reasoning_json[4:]
-        reasoning_json = reasoning_json.strip()
+    ranking_json = html_lib.unescape(ranking_json)
 
-    reasoning_items = json.loads(reasoning_json)
-    reasoning_map = {item.get("cv_id", ""): item for item in reasoning_items}
-
-    # ── Assemble final results using pre-scores + LLM reasoning ──────────────
+    items = json.loads(ranking_json)
     verified_names = {cv.candidate_name.lower(): cv.candidate_name for cv in cvs}
+
     results = []
-
-    for rank_idx, cv in enumerate(cvs_sorted, start=1):
-        ps = pre_scores[cv.id]
-        reasoning = reasoning_map.get(cv.id, {})
-
-        # Authoritative name from cv_id_map
-        candidate_name = cv_id_map[cv.id].candidate_name
-
+    for item in items:
         try:
-            result = RankedResult(
-                rank=rank_idx,
-                cv_id=cv.id,
-                candidate_name=candidate_name,
-                score=ps["pre_score"],
-                reason=reasoning.get("reason", ""),
-                experience_years=cv.experience_years or 0.0,
-                key_strengths=reasoning.get("key_strengths", ""),
-                skills_matched=reasoning.get("skills_matched", ps["core_matched"] + ps["important_matched"]),
-                skills_missing=reasoning.get("skills_missing", ""),
-            )
+            result = RankedResult(**item)
+            if result.cv_id and result.cv_id in cv_id_map:
+                result = result.model_copy(update={"candidate_name": cv_id_map[result.cv_id].candidate_name})
+            else:
+                matched = verified_names.get(result.candidate_name.lower())
+                if matched:
+                    result = result.model_copy(update={"candidate_name": matched})
             results.append(result)
         except Exception as e:
-            logger.warning(f"Failed to assemble result for {cv.candidate_name}: {e}")
+            logger.warning(f"Failed to parse result item: {e}")
 
     status_placeholder.empty()
     return validate_results(results)
